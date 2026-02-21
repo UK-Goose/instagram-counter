@@ -3,7 +3,7 @@ name: Update followers.json (no Meta API)
 on:
   schedule:
     - cron: "*/5 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,42 +15,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-          - name: Fetch follower count from Mixerno (robust)
+      - name: Fetch follower count from Mixerno (robust)
+        shell: bash
         run: |
           set -e
 
           USER="upupandawayoffical"
           URL="https://mixerno.space/embed-count/instagram-user-counter/${USER}"
 
-          # Try a few times (sometimes you get rate-limit/temporary blocks)
+          COUNT=""
+
           for i in 1 2 3; do
-            RESP=$(curl -fsSL \
+            RESP="$(curl -fsSL \
               -A "Mozilla/5.0 (compatible; GitHubActionsBot/1.0)" \
               -H "Accept: text/plain,*/*" \
-              "$URL" || true)
+              "${URL}" || true)"
 
-            COUNT=$(echo "$RESP" | tr -d '\n\r ')
+            CANDIDATE="$(echo "${RESP}" | tr -d '\n\r ' )"
 
-            if echo "$COUNT" | grep -Eq '^[0-9]+$'; then
-              echo "Got follower count: $COUNT"
+            if echo "${CANDIDATE}" | grep -Eq '^[0-9]+$'; then
+              COUNT="${CANDIDATE}"
+              echo "Got follower count: ${COUNT}"
               break
             fi
 
-            echo "Attempt $i did not return digits. Response (first 200 chars):"
-            echo "$RESP" | head -c 200
+            echo "Attempt ${i} did not return digits. Response (first 200 chars):"
+            echo "${RESP}" | head -c 200
             echo ""
             sleep 2
           done
 
-          # Final check
-          if ! echo "$COUNT" | grep -Eq '^[0-9]+$'; then
+          if ! echo "${COUNT}" | grep -Eq '^[0-9]+$'; then
             echo "Failed to get numeric follower count."
             exit 1
           fi
 
-          UPDATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          UPDATED="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-          cat > followers.json << EOF
+          cat > followers.json <<EOF
           {
             "handle": "${USER}",
             "followers": ${COUNT},
@@ -58,16 +60,12 @@ jobs:
           }
           EOF
 
-            "handle": "${USER}",
-            "followers": ${COUNT},
-            "updated": "${UPDATED}"
-          }
-          EOF
-
       - name: Commit and push if changed
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add followers.json
           git commit -m "Auto-update followers.json" || exit 0
           git push
+
