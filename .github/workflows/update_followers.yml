@@ -1,9 +1,9 @@
 name: Update followers.json (no Meta API)
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "*/5 * * * *"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,34 +12,24 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Fetch follower count from Instastatistics
-        shell: bash
+      - name: Fetch followers and write JSON
         run: |
           set -e
 
-          USER="upupandawayoffical"
-          URL="https://instastatistics.com/${USER}"
-          UPDATED="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          USER=upupandawayoffical
+          UPDATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          COUNT="$(curl -fsSL -A "Mozilla/5.0 (compatible; GitHubActionsBot/1.0)" "${URL}" | python3 -c "import re,sys; html=sys.stdin.read(); m=re.search(r'\\b([0-9][0-9,]*)\\b\\s*Followers\\b', html, re.I); 
-print(m.group(1).replace(',','')) if m else sys.exit(1)")"
+          COUNT=$(curl -fsSL -A "Mozilla/5.0" "https://instastatistics.com/${USER}" \
+            | python3 -c 'import re,sys; h=sys.stdin.read(); m=re.search(r"([0-9][0-9,]*)\s*Followers", h, re.I); print(m.group(1).replace(",","")) if m else sys.exit(1)')
 
-          # Final sanity check (digits only)
-          if ! echo "${COUNT}" | grep -Eq '^[0-9]+$'; then
-            echo "Could not parse a numeric follower count."
-            exit 1
-          fi
-
-          echo "Followers: ${COUNT}"
+          echo "Followers: $COUNT"
 
           printf '{\n  "handle": "%s",\n  "followers": %s,\n  "updated": "%s"\n}\n' \
-            "${USER}" "${COUNT}" "${UPDATED}" > followers.json
+            "$USER" "$COUNT" "$UPDATED" > followers.json
 
       - name: Commit and push if changed
-        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
