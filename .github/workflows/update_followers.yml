@@ -15,18 +15,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch follower count from Mixerno
+          - name: Fetch follower count from Mixerno (robust)
         run: |
           set -e
 
           USER="upupandawayoffical"
           URL="https://mixerno.space/embed-count/instagram-user-counter/${USER}"
 
-          COUNT=$(curl -fsS "$URL" | tr -d '\n\r ')
+          # Try a few times (sometimes you get rate-limit/temporary blocks)
+          for i in 1 2 3; do
+            RESP=$(curl -fsSL \
+              -A "Mozilla/5.0 (compatible; GitHubActionsBot/1.0)" \
+              -H "Accept: text/plain,*/*" \
+              "$URL" || true)
 
+            COUNT=$(echo "$RESP" | tr -d '\n\r ')
+
+            if echo "$COUNT" | grep -Eq '^[0-9]+$'; then
+              echo "Got follower count: $COUNT"
+              break
+            fi
+
+            echo "Attempt $i did not return digits. Response (first 200 chars):"
+            echo "$RESP" | head -c 200
+            echo ""
+            sleep 2
+          done
+
+          # Final check
           if ! echo "$COUNT" | grep -Eq '^[0-9]+$'; then
-            echo "Unexpected response:"
-            echo "$COUNT"
+            echo "Failed to get numeric follower count."
             exit 1
           fi
 
@@ -34,6 +52,12 @@ jobs:
 
           cat > followers.json << EOF
           {
+            "handle": "${USER}",
+            "followers": ${COUNT},
+            "updated": "${UPDATED}"
+          }
+          EOF
+
             "handle": "${USER}",
             "followers": ${COUNT},
             "updated": "${UPDATED}"
