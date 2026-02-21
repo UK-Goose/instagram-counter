@@ -15,43 +15,90 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch follower count from Mixerno (robust)
+      - name: Fetch follower count (Mixerno, fallback to Instastatistics)
         shell: bash
         run: |
           set -e
 
           USER="upupandawayoffical"
-          URL="https://mixerno.space/embed-count/instagram-user-counter/${USER}"
+          UPDATED="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          get_from_mixerno () {
+            URL="https://mixerno.space/embed-count/instagram-user-counter/${USER}"
+            RESP="$(curl -fsSL -A "Mozilla/5.0 (compatible; GitHubActionsBot/1.0)" -H "Accept: text/plain,*/*" "$URL" || true)"
+            echo "$RESP" | tr -d '\n\r ' | grep -Eo '^[0-9]+$' || true
+          }
+
+          get_from_instastatistics () {
+            URL="https://instastatistics.com/${USER}"
+            HTML="$(curl -fsSL -A "Mozilla/5.0 (compatible; GitHubActionsBot/1.0)" "$URL" || true)"
+
+            # Extract the first big number that appears before the word "Followers"
+            python3 - <<'PY' || true
+import re, sys
+html = sys.stdin.read()
+
+# Very tolerant patterns (site HTML can vary)
+patterns = [
+    r'([0-9][0-9,\.]*)\s*</[^>]*>\s*Followers',   # number tag then Followers
+    r'([0-9][0-9,\.]*)\s*Followers',              # plain "12345 Followers"
+]
+
+for pat in patterns:
+    m = re.search(pat, html, flags=re.IGNORECASE)
+    if m:
+        s = m.group(1).replace(',', '').replace('.', '')
+        if s.isdigit():
+            print(s)
+            sys.exit(0)
+
+sys.exit(1)
+PY
+          }
 
           COUNT=""
 
+          # Try Mixerno first (3 attempts)
           for i in 1 2 3; do
-            RESP="$(curl -fsSL \
-              -A "Mozilla/5.0 (compatible; GitHubActionsBot/1.0)" \
-              -H "Accept: text/plain,*/*" \
-              "${URL}" || true)"
-
-            CANDIDATE="$(echo "${RESP}" | tr -d '\n\r ' )"
-
-            if echo "${CANDIDATE}" | grep -Eq '^[0-9]+$'; then
-              COUNT="${CANDIDATE}"
-              echo "Got follower count: ${COUNT}"
+            COUNT="$(get_from_mixerno)"
+            if [[ "$COUNT" =~ ^[0-9]+$ ]]; then
+              echo "Got COUNT from Mixerno: $COUNT"
               break
             fi
-
-            echo "Attempt ${i} did not return digits. Response (first 200 chars):"
-            echo "${RESP}" | head -c 200
-            echo ""
+            echo "Mixerno attempt $i failed; retrying..."
             sleep 2
           done
 
-          if ! echo "${COUNT}" | grep -Eq '^[0-9]+$'; then
-            echo "Failed to get numeric follower count."
-            exit 1
+          # Fallback to Instastatistics
+          if ! [[ "$COUNT" =~ ^[0-9]+$ ]]; then
+            echo "Falling back to Instastatistics..."
+            COUNT="$(curl -fsSL -A "Mozilla/5.0 (compatible; GitHubActionsBot/1.0)" "https://instastatistics.com/${USER}" | python3 - <<'PY' || true
+import re, sys
+html = sys.stdin.read()
+patterns = [
+    r'([0-9][0-9,\.]*)\s*</[^>]*>\s*Followers',
+    r'([0-9][0-9,\.]*)\s*Followers',
+]
+for pat in patterns:
+    m = re.search(pat, html, flags=re.IGNORECASE)
+    if m:
+        s = m.group(1).replace(',', '').replace('.', '')
+        if s.isdigit():
+            print(s)
+            sys.exit(0)
+sys.exit(1)
+PY
+)"
           fi
 
-          UPDATED="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          # If still no COUNT, keep last known followers.json and do NOT fail the run
+          if ! [[ "$COUNT" =~ ^[0-9]+$ ]]; then
+            echo "Could not fetch a valid follower count from either source."
+            echo "Keeping existing followers.json (if present)."
+            exit 0
+          fi
 
+          # Write followers.json
           cat > followers.json <<EOF
           {
             "handle": "${USER}",
@@ -68,4 +115,5 @@ jobs:
           git add followers.json
           git commit -m "Auto-update followers.json" || exit 0
           git push
+
 
